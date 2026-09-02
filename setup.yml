@@ -1,18 +1,21 @@
 name: tabformer
 channels:
-  - anaconda
   - pytorch
-  - huggingface
+  - nvidia
   - conda-forge
+  - defaults
 dependencies:
-  - python>=3.8
-  - pip>=21.0
-  - pytorch=1.7.1=py3.8_cuda11.0.221_cudnn8.0.5_0
-  - torchvision
+  - python=3.11
+  - pip
+  - numpy
   - pandas
   - scikit-learn
-  - transformers
-  - numpy
-  - libgcc
+  - tqdm
+  # Instala o PyTorch 2.x mais recente. Se sua máquina tiver uma placa NVIDIA (como uma RTX),
+  # ele já baixa os drivers CUDA 12.1. Se não tiver, ele roda perfeitamente na CPU.
+  - pytorch
+  - torchvision
+  - pytorch-cuda=12.1
   - pip:
-      - transformers==3.2.0
+      - transformers>=4.30.0 # Garante a versão moderna do Hugging Face
+      - modal # Para você poder rodar o modal_train.py direto deste ambiente

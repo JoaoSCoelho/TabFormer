@@ -15,21 +15,30 @@ from models.tabformer_gpt2 import TabFormerGPT2LMHeadModel
 
 
 class TabFormerBaseModel(PreTrainedModel):
-    def __init__(self, hf_model, tab_embeddings, config):
+    # Mudança 1: config obrigatoriamente como o primeiro argumento
+    def __init__(self, config, hf_model, tab_embeddings):
+        config._attn_implementation = "eager"
+
         super().__init__(config)
+        
 
         self.model = hf_model
         self.tab_embeddings = tab_embeddings
 
-    def forward(self, input_ids, **input_args):
-        inputs_embeds = self.tab_embeddings(input_ids)
-        return self.model(inputs_embeds=inputs_embeds, **input_args)
+    # Mudança 2: input_ids agora é opcional (nomeado) para receber do Trainer via **kwargs
+    def forward(self, input_ids=None, **input_args):
+        if input_ids is not None:
+            inputs_embeds = self.tab_embeddings(input_ids)
+            return self.model(inputs_embeds=inputs_embeds, **input_args)
+        return self.model(**input_args)
 
 
 class TabFormerHierarchicalLM(PreTrainedModel):
     base_model_prefix = "bert"
 
     def __init__(self, config, vocab):
+        config._attn_implementation = "eager"
+
         super().__init__(config)
 
         self.config = config
@@ -37,9 +46,12 @@ class TabFormerHierarchicalLM(PreTrainedModel):
         self.tab_embeddings = TabFormerEmbeddings(self.config)
         self.tb_model = TabFormerBertForMaskedLM(self.config, vocab)
 
-    def forward(self, input_ids, **input_args):
-        inputs_embeds = self.tab_embeddings(input_ids)
-        return self.tb_model(inputs_embeds=inputs_embeds, **input_args)
+    # Mesma adaptação do input_ids opcional aqui
+    def forward(self, input_ids=None, **input_args):
+        if input_ids is not None:
+            inputs_embeds = self.tab_embeddings(input_ids)
+            return self.tb_model(inputs_embeds=inputs_embeds, **input_args)
+        return self.tb_model(**input_args)
 
 
 class TabFormerBertLM:
@@ -78,9 +90,11 @@ class TabFormerBertLM:
 
 
 class TabFormerGPT2:
-    def __init__(self, special_tokens, vocab, field_ce=False, flatten=False):
+    def __init__(self, special_tokens, vocab, field_ce=False, flatten=False, ncols=None, field_hidden_size=768):
 
         self.vocab = vocab
+        self.ncols = ncols
+        self.field_hidden_size = field_hidden_size
         self.config = GPT2Config(vocab_size=len(self.vocab))
 
         self.tokenizer = TabFormerTokenizer(
@@ -97,7 +111,14 @@ class TabFormerGPT2:
         else:
             model = GPT2LMHeadModel(self.config)
         if not flatten:
-            tab_emb_config = ddict(vocab_size=len(self.vocab), hidden_size=self.config.hidden_size)
-            model = TabFormerBaseModel(model, TabFormerEmbeddings(tab_emb_config))
+            tab_emb_config = ddict(
+                vocab_size=len(self.vocab),
+                hidden_size=self.config.hidden_size,
+                field_hidden_size=self.field_hidden_size,
+                ncols=self.ncols,
+                pad_token_id=self.config.pad_token_id if hasattr(self.config, 'pad_token_id') else 0
+            )
+            # Mudança 3: Passamos a configuração na ordem correta para o Base Model
+            model = TabFormerBaseModel(self.config, model, TabFormerEmbeddings(tab_emb_config))
 
         return model

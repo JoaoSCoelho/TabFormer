@@ -1,10 +1,10 @@
 import torch
 from torch import nn
-from torch.nn import CrossEntropyLoss
+from torch.nn import CrossEntropyLoss, LayerNorm as BertLayerNorm
 
-from transformers.modeling_bert import ACT2FN, BertLayerNorm
-from transformers.modeling_bert import BertForMaskedLM
-from transformers.configuration_bert import BertConfig
+# MUDANÇA 1: Imports atualizados para a estrutura v4.x do Transformers
+from transformers.activations import ACT2FN
+from transformers import BertForMaskedLM, BertConfig
 from models.custom_criterion import CustomAdaptiveLogSoftmax
 
 
@@ -27,7 +27,8 @@ class TabFormerBertConfig(BertConfig):
         self.hidden_size = hidden_size
         self.flatten = flatten
         self.vocab_size = vocab_size
-        self.num_attention_heads=num_attention_heads
+        self.num_attention_heads = num_attention_heads
+
 
 class TabFormerBertPredictionHeadTransform(nn.Module):
     def __init__(self, config):
@@ -45,24 +46,21 @@ class TabFormerBertPredictionHeadTransform(nn.Module):
         hidden_states = self.LayerNorm(hidden_states)
         return hidden_states
 
+
 class TabFormerBertLMPredictionHead(nn.Module):
     def __init__(self, config):
         super().__init__()
         self.transform = TabFormerBertPredictionHeadTransform(config)
 
-        # The output weights are the same as the input embeddings, but there is
-        # an output-only bias for each token.
         self.decoder = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
-
         self.bias = nn.Parameter(torch.zeros(config.vocab_size))
-
-        # Need a link between the two variables so that the bias is correctly resized with `resize_token_embeddings`
         self.decoder.bias = self.bias
 
     def forward(self, hidden_states):
         hidden_states = self.transform(hidden_states)
         hidden_states = self.decoder(hidden_states)
         return hidden_states
+
 
 class TabFormerBertOnlyMLMHead(nn.Module):
     def __init__(self, config):
@@ -73,6 +71,7 @@ class TabFormerBertOnlyMLMHead(nn.Module):
         prediction_scores = self.predictions(sequence_output)
         return prediction_scores
 
+
 class TabFormerBertForMaskedLM(BertForMaskedLM):
     def __init__(self, config, vocab):
         super().__init__(config)
@@ -81,6 +80,7 @@ class TabFormerBertForMaskedLM(BertForMaskedLM):
         self.cls = TabFormerBertOnlyMLMHead(config)
         self.init_weights()
 
+    # MUDANÇA 2: Adicionado 'labels' no forward para compatibilidade com o Trainer v4+
     def forward(
             self,
             input_ids=None,
@@ -89,11 +89,18 @@ class TabFormerBertForMaskedLM(BertForMaskedLM):
             position_ids=None,
             head_mask=None,
             inputs_embeds=None,
-            masked_lm_labels=None,
+            labels=None,
+            masked_lm_labels=None, # Mantido por retrocompatibilidade
             encoder_hidden_states=None,
             encoder_attention_mask=None,
-            lm_labels=None,
+            **kwargs
     ):
+        # Mapeia o 'labels' moderno para a variável antiga
+        if labels is not None:
+            masked_lm_labels = labels
+        elif masked_lm_labels is None and "lm_labels" in kwargs:
+            masked_lm_labels = kwargs["lm_labels"]
+
         outputs = self.bert(
             input_ids,
             attention_mask=attention_mask,
@@ -103,59 +110,63 @@ class TabFormerBertForMaskedLM(BertForMaskedLM):
             inputs_embeds=inputs_embeds,
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_attention_mask,
+            return_dict=False, # MUDANÇA 3: Garante o retorno em Tupla (outputs[0])
         )
 
         sequence_output = outputs[0]  # [bsz * seqlen * hidden]
 
         if not self.config.flatten:
             output_sz = list(sequence_output.size())
-            expected_sz = [output_sz[0], output_sz[1]*self.config.ncols, -1]
+            expected_sz = [output_sz[0], output_sz[1] * self.config.ncols, -1]
             sequence_output = sequence_output.view(expected_sz)
-            masked_lm_labels = masked_lm_labels.view(expected_sz[0], -1)
+            
+            if masked_lm_labels is not None:
+                masked_lm_labels = masked_lm_labels.view(expected_sz[0], -1)
 
         prediction_scores = self.cls(sequence_output) # [bsz * seqlen * vocab_sz]
-
         outputs = (prediction_scores,) + outputs[2:]
 
-        # prediction_scores : [bsz x seqlen x vsz]
-        # masked_lm_labels  : [bsz x seqlen]
+        # Cálculo do Loss
+        if masked_lm_labels is not None:
+            total_masked_lm_loss = 0
+            seq_len = prediction_scores.size(1)
+            
+            field_names = self.vocab.get_field_keys(remove_target=True, ignore_special=False)
+            for field_idx, field_name in enumerate(field_names):
+                col_ids = list(range(field_idx, seq_len, len(field_names)))
+                global_ids_field = self.vocab.get_field_ids(field_name)
 
-        total_masked_lm_loss = 0
+                prediction_scores_field = prediction_scores[:, col_ids, :][:, :, global_ids_field]
+                masked_lm_labels_field = masked_lm_labels[:, col_ids]
+                
+                masked_lm_labels_field_local = self.vocab.get_from_global_ids(
+                    global_ids=masked_lm_labels_field,
+                    what_to_get='local_ids'
+                )
 
-        seq_len = prediction_scores.size(1)
-        # TODO : remove_target is True for card
-        field_names = self.vocab.get_field_keys(remove_target=True, ignore_special=False)
-        for field_idx, field_name in enumerate(field_names):
-            col_ids = list(range(field_idx, seq_len, len(field_names)))
+                nfeas = len(global_ids_field)
+                loss_fct = self.get_criterion(field_name, nfeas, prediction_scores.device)
 
-            global_ids_field = self.vocab.get_field_ids(field_name)
+                masked_lm_loss_field = loss_fct(
+                    prediction_scores_field.contiguous().view(-1, len(global_ids_field)),
+                    masked_lm_labels_field_local.contiguous().view(-1)
+                )
 
-            prediction_scores_field = prediction_scores[:, col_ids, :][:, :, global_ids_field]  # bsz * 10 * K
-            masked_lm_labels_field = masked_lm_labels[:, col_ids]
-            masked_lm_labels_field_local = self.vocab.get_from_global_ids(global_ids=masked_lm_labels_field,
-                                                                          what_to_get='local_ids')
+                total_masked_lm_loss += masked_lm_loss_field
 
-            nfeas = len(global_ids_field)
-            loss_fct = self.get_criterion(field_name, nfeas, prediction_scores.device)
-
-            masked_lm_loss_field = loss_fct(prediction_scores_field.view(-1, len(global_ids_field)),
-                                            masked_lm_labels_field_local.view(-1))
-
-            total_masked_lm_loss += masked_lm_loss_field
-
-        return (total_masked_lm_loss,) + outputs
+            return (total_masked_lm_loss,) + outputs
+        
+        return outputs
 
     def get_criterion(self, fname, vs, device, cutoffs=False, div_value=4.0):
-
         if fname in self.vocab.adap_sm_cols:
             if not cutoffs:
                 cutoffs = [int(vs/15), 3*int(vs/15), 6*int(vs/15)]
-
             criteria = CustomAdaptiveLogSoftmax(in_features=vs, n_classes=vs, cutoffs=cutoffs, div_value=div_value)
-
             return criteria.to(device)
         else:
             return CrossEntropyLoss()
+
 
 class TabFormerBertModel(BertForMaskedLM):
     def __init__(self, config):
@@ -172,10 +183,10 @@ class TabFormerBertModel(BertForMaskedLM):
             position_ids=None,
             head_mask=None,
             inputs_embeds=None,
-            masked_lm_labels=None,
+            labels=None,
             encoder_hidden_states=None,
             encoder_attention_mask=None,
-            lm_labels=None,
+            **kwargs
     ):
         outputs = self.bert(
             input_ids,
@@ -186,8 +197,8 @@ class TabFormerBertModel(BertForMaskedLM):
             inputs_embeds=inputs_embeds,
             encoder_hidden_states=encoder_hidden_states,
             encoder_attention_mask=encoder_attention_mask,
+            return_dict=False,
         )
 
-        sequence_output = outputs[0]  # [bsz * seqlen * hidden]
-
+        sequence_output = outputs[0]  
         return sequence_output

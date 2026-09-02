@@ -18,6 +18,14 @@ This repository provides the pytorch source code, and data for tabular transform
 
 (X) represents the versions which code is tested on.
 
+```
+git lfs pull
+```
+
+```
+tar -xvzf ./data/credit_card/transactions.tgz -C ./data/credit_card/
+```
+
 These can be installed using yaml by running : 
 ```
 conda env create -f setup.yml

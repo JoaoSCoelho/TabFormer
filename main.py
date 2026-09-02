@@ -91,6 +91,8 @@ def main(args):
                              vocab=vocab,
                              field_ce=args.field_ce,
                              flatten=args.flatten,
+                             ncols=dataset.ncols,                 
+                             field_hidden_size=args.field_hs
                              )
 
     log.info(f"model initiated: {tab_net.model.__class__}")
@@ -111,11 +113,8 @@ def main(args):
         logging_dir=args.log_dir,  # directory for storing logs
         save_steps=args.save_steps,
         do_train=args.do_train,
-        # do_eval=args.do_eval,
-        # evaluation_strategy="epoch",
         prediction_loss_only=True,
         overwrite_output_dir=True,
-        # eval_steps=10000
     )
 
     trainer = Trainer(
@@ -126,12 +125,30 @@ def main(args):
         eval_dataset=eval_dataset,
     )
 
+    # MUDANÇA: Ajustado para o padrão do Hugging Face v4.x
+    checkpoint_path = None
     if args.checkpoint:
-        model_path = join(args.output_dir, f'checkpoint-{args.checkpoint}')
-    else:
-        model_path = args.output_dir
+        checkpoint_path = join(args.output_dir, f'checkpoint-{args.checkpoint}')
 
-    trainer.train(model_path=model_path)
+    if args.do_train:
+        # 'resume_from_checkpoint' substitui o antigo 'model_path'
+        trainer.train(resume_from_checkpoint=checkpoint_path)
+        trainer.save_model(args.output_dir)
+
+    if args.do_eval:
+        log.info("Iniciando avaliação no conjunto de teste...")
+        # Carrega os pesos salvos se formos apenas avaliar (sem treinar antes)
+        if not args.do_train:
+            import os
+            model_file = os.path.join(args.output_dir, "pytorch_model.bin")
+            if os.path.exists(model_file):
+                tab_net.model.load_state_dict(torch.load(model_file))
+                log.info("Pesos do modelo carregados com sucesso para avaliação.")
+            else:
+                log.warning("Arquivo pytorch_model.bin não encontrado. Avaliando com pesos aleatórios!")
+                
+        metrics = trainer.evaluate(eval_dataset=test_dataset)
+        log.info(f"Métricas da Avaliação: {metrics}")
 
 
 if __name__ == "__main__":

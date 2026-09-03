@@ -5,6 +5,8 @@ def define_main_parser(parser=None):
     if parser is None:
         parser = argparse.ArgumentParser()
 
+    parser.add_argument("--group_by", type=str, default=None,
+                        help="Coluna usada para agrupar as sequências (ex: Conta, Usuario, ou deixe vazio para sequencia global)")
     parser.add_argument("--jid", type=int,
                         default=1,
                         help="job id: 1[default] used for job queue")

@@ -12,6 +12,7 @@ image = (
         "transformers", 
         "pandas", 
         "numpy", 
+        "accelerate",
         "scikit-learn", 
         "tqdm"
     )
@@ -44,5 +45,6 @@ def train_model():
         "--data_type", "card",
         "--data_root", "/root/data/credit_card/",
         "--output_dir", "/root/data/output-gpt",
-        "--save_steps", "2000"
+        "--save_steps", "20000",
+        "--nrows", "5000000",
     ], check=True)

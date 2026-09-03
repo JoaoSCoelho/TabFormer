@@ -8,7 +8,12 @@ class TransDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
     def __call__(
             self, examples: List[Union[List[int], torch.Tensor, Dict[str, torch.Tensor]]]
     ) -> Dict[str, torch.Tensor]:
-        batch = self._tensorize_batch(examples)
+        # MUDANÇA: Substituição moderna para o antigo self._tensorize_batch(examples)
+        if isinstance(examples[0], torch.Tensor):
+            batch = torch.stack(examples)
+        else:
+            batch = torch.tensor(examples, dtype=torch.long)
+            
         sz = batch.shape
         if self.mlm:
             batch = batch.view(sz[0], -1)

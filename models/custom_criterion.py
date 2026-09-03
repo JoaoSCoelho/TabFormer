@@ -1,7 +1,7 @@
 from torch import Tensor
 from torch.nn import AdaptiveLogSoftmaxWithLoss
 from torch.nn.functional import log_softmax
-
+import torch
 
 class CustomAdaptiveLogSoftmax(AdaptiveLogSoftmaxWithLoss):
     def __init__(

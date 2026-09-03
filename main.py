@@ -6,14 +6,13 @@ import torch
 import random
 from args import define_main_parser
 
-from transformers import DataCollatorForLanguageModeling, Trainer, TrainingArguments
+from transformers import Trainer, TrainingArguments
 
 from dataset.prsa import PRSADataset
 from dataset.card import TransactionDataset
 from models.modules import TabFormerBertLM, TabFormerGPT2
 from misc.utils import random_split_dataset
-from dataset.datacollator import TransDataCollatorForLanguageModeling
-
+from dataset.contabil import ContabilDataset
 
 logger = logging.getLogger(__name__)
 log = logger
@@ -53,6 +52,20 @@ def main(args):
                               use_station=False,
                               flatten=args.flatten,
                               vocab_dir=args.output_dir)
+    elif args.data_type == 'contabil':
+        dataset = ContabilDataset(
+            root=args.data_root,
+            fname=args.data_fname,
+            vocab_dir=args.output_dir,
+            nrows=args.nrows,
+            book_account_ids=args.user_ids, # Se aproveitar o argumento de IDs de conta
+            mlm=args.mlm,
+            cached=args.cached,
+            stride=args.stride,
+            flatten=args.flatten,
+            group_by=args.group_by,
+            skip_user=args.skip_user
+        )
 
     else:
         raise Exception(f"data type '{args.data_type}' not defined")
@@ -110,11 +123,9 @@ def main(args):
     training_args = TrainingArguments(
         output_dir=args.output_dir,  # output directory
         num_train_epochs=args.num_train_epochs,  # total number of training epochs
-        logging_dir=args.log_dir,  # directory for storing logs
         save_steps=args.save_steps,
         do_train=args.do_train,
         prediction_loss_only=True,
-        overwrite_output_dir=True,
     )
 
     trainer = Trainer(

@@ -13,6 +13,7 @@ from dataset.card import TransactionDataset
 from models.modules import TabFormerBertLM, TabFormerGPT2
 from misc.utils import random_split_dataset
 from dataset.contabil import ContabilDataset
+from dataset.datacollator import DataCollatorForLanguageModeling, TransDataCollatorForLanguageModeling
 
 logger = logging.getLogger(__name__)
 log = logger
@@ -58,13 +59,13 @@ def main(args):
             fname=args.data_fname,
             vocab_dir=args.output_dir,
             nrows=args.nrows,
-            book_account_ids=args.user_ids, # Se aproveitar o argumento de IDs de conta
+            group_by_ids=args.user_ids, # Se aproveitar o argumento de IDs de conta
             mlm=args.mlm,
             cached=args.cached,
             stride=args.stride,
             flatten=args.flatten,
             group_by=args.group_by,
-            skip_user=args.skip_user
+            skip_group_col=args.skip_user
         )
 
     else:
@@ -110,15 +111,17 @@ def main(args):
 
     log.info(f"model initiated: {tab_net.model.__class__}")
 
+    # Substitua o bloco antigo do collator por este:
     if args.flatten:
-        collactor_cls = "DataCollatorForLanguageModeling"
+        log.info("collactor class: DataCollatorForLanguageModeling")
+        data_collator = DataCollatorForLanguageModeling(
+            tokenizer=tab_net.tokenizer, mlm=args.mlm, mlm_probability=args.mlm_prob
+        )
     else:
-        collactor_cls = "TransDataCollatorForLanguageModeling"
-
-    log.info(f"collactor class: {collactor_cls}")
-    data_collator = eval(collactor_cls)(
-        tokenizer=tab_net.tokenizer, mlm=args.mlm, mlm_probability=args.mlm_prob
-    )
+        log.info("collactor class: TransDataCollatorForLanguageModeling")
+        data_collator = TransDataCollatorForLanguageModeling(
+            tokenizer=tab_net.tokenizer, mlm=args.mlm, mlm_probability=args.mlm_prob
+        )
 
     training_args = TrainingArguments(
         output_dir=args.output_dir,  # output directory

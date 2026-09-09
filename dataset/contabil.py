@@ -24,7 +24,7 @@ class ContabilDataset(Dataset):
     def __init__(self,
                  mlm,
                  group_by=None,
-                 book_account_ids=None,
+                 group_by_ids=None,
                  seq_len=10,
                  num_bins=10,
                  cached=True,
@@ -37,18 +37,18 @@ class ContabilDataset(Dataset):
                  stride=5,
                  adap_thres=10 ** 8,
                  return_labels=False,
-                 skip_user=False):
+                 skip_group_col=False):
 
         self.root = root
         self.fname = fname
         self.nrows = nrows
         self.fextension = f'_{fextension}' if fextension else ''
         self.cached = cached
-        self.book_account_ids = book_account_ids
+        self.group_by_ids = group_by_ids
         self.return_labels = return_labels
-        self.skip_user = skip_user
+        self.skip_group_col = skip_group_col
 
-        self.group_by = group_by
+        self.group_by: str | None = group_by
 
         self.mlm = mlm
         self.trans_stride = stride
@@ -124,8 +124,13 @@ class ContabilDataset(Dataset):
 
     @staticmethod
     def amountEncoder(X_series):
-        # Trata floats puros, lidando com nulos e valores negativos (usando log no valor absoluto)
-        amt = X_series.astype(float).fillna(0.0).apply(lambda val: max(1.0, abs(val))).apply(math.log)
+        # 1. Converte para float e substitui nulos/NaNs por 0.0
+        s = X_series.astype(float).fillna(0.0)
+
+        # 2. Aplica o Signed Log: sign(x) * ln(1 + |x|)
+        # Usamos np.log1p(x), que calcula ln(1 + x) com alta precisão numérica para valores próximos de zero.
+        amt = np.sign(s) * np.log1p(np.abs(s))
+
         return pd.DataFrame(amt)
 
 
@@ -168,7 +173,7 @@ class ContabilDataset(Dataset):
             all_columns = list(self.trans_table.columns)
             feature_cols = all_columns.copy()
 
-            if self.group_by and self.group_by in feature_cols and self.skip_user:
+            if self.group_by and self.group_by in feature_cols and self.skip_group_col:
                 feature_cols.remove(self.group_by)
 
             columns_names = feature_cols.copy()
@@ -180,12 +185,11 @@ class ContabilDataset(Dataset):
 
                 for group_val in tqdm.tqdm(unique_groups):
                     group_df = self.trans_table.loc[self.trans_table[self.group_by] == group_val]
-                    group_trans, group_labels = [], []
                     
-                    for _, row in group_df.iterrows():
-                        feat_values = [row[col] for col in feature_cols]
-                        group_trans.extend(feat_values)
-                        group_labels.append(0) # Label fictício apenas para compatibilidade estrutural
+                    
+                    # Alternativa ultra-rápida ao iterrows:
+                    group_trans = group_df[feature_cols].to_numpy().flatten().tolist()
+                    group_labels = [0] * len(group_df)
 
                     trans_data.append(group_trans)
                     trans_labels.append(group_labels)
@@ -193,12 +197,11 @@ class ContabilDataset(Dataset):
             # CASO 2: Linha do tempo global contínua
             else:
                 log.info("Nenhum 'group_by' especificado. Tratando toda a base como uma linha do tempo global.")
-                group_trans, group_labels = [], []
                 
-                for _, row in self.trans_table.iterrows():
-                    feat_values = [row[col] for col in feature_cols]
-                    group_trans.extend(feat_values)
-                    group_labels.append(0)
+                
+                # Alternativa ultra-rápida ao iterrows:
+                group_trans = self.trans_table[feature_cols].to_numpy().flatten().tolist()
+                group_labels = [0] * len(self.trans_table)
 
                 trans_data.append(group_trans)
                 trans_labels.append(group_labels)
@@ -265,28 +268,33 @@ class ContabilDataset(Dataset):
             if bert:
                 ncols += 1 (for sep)
         '''
-        self.ncols = len(self.vocab.field_keys) - 2 + (1 if self.mlm else 0)
+        self.ncols = len(self.vocab.field_keys) - 1 + (1 if self.mlm else 0)
         log.info(f"ncols: {self.ncols}")
         log.info(f"no of samples {len(self.data)}")
 
     def get_csv(self, fname):
         data = pd.read_csv(fname, nrows=self.nrows)
         
-        if self.book_account_ids:
-            # Se houver um group_by definido, usamos ele como referência de filtro. 
-            # Caso contrário, assumimos uma coluna padrão de conta (ex: 'Conta' ou 'ContaDebito')
-            filter_col = self.group_by if self.group_by else 'erp_book_account' 
+        if self.group_by_ids:
+            if (not self.group_by):
+                log.error("group_by_ids foi fornecido, mas group_by não foi definido. Não é possível filtrar sem a coluna de referência.")
+                raise ValueError("group_by_ids foi fornecido, mas group_by não foi definido.")
 
-            if filter_col in data.columns:
-                log.info(f'Filtrando dados pela lista de contas em "{filter_col}": {self.book_account_ids}...')
-                
-                # Converte os IDs passados para o mesmo tipo de dado da coluna do DataFrame (evita int vs str bug)
-                col_type = data[filter_col].dtype
-                account_ids = [col_type.type(x) for x in self.book_account_ids]
-                
-                data = data[data[filter_col].isin(account_ids)]
-            else:
-                log.warning(f"Aviso: A coluna '{filter_col}' não foi encontrada no CSV para aplicar o filtro de book_account_ids.")
+            filter_col = self.group_by 
+
+            if not filter_col in data.columns:
+                log.error(f"A coluna '{filter_col}' não existe no DataFrame. Não é possível filtrar pelos IDs fornecidos.")
+                raise KeyError(f"A coluna '{filter_col}' não existe no DataFrame.")
+
+            
+            log.info(f'Filtrando dados pela lista de contas em "{filter_col}": {self.group_by_ids}...')
+            
+            # Converte os IDs passados para o mesmo tipo de dado da coluna do DataFrame (evita int vs str bug)
+            col_type = data[filter_col].dtype
+            account_ids = [col_type.type(x) for x in self.group_by_ids]
+            
+            data = data[data[filter_col].isin(account_ids)]
+            
 
         self.nrows = data.shape[0]
         log.info(f"read data : {data.shape}")
@@ -298,8 +306,11 @@ class ContabilDataset(Dataset):
 
     def init_vocab(self):
         column_names = list(self.trans_table.columns)
-        if self.skip_user:
-            column_names.remove("User")
+        if self.skip_group_col:
+            if not self.group_by:
+                log.error("skip_group_col foi definido como True, mas group_by não foi fornecido. Não é possível remover a coluna de agrupamento.")
+                raise ValueError("skip_group_col foi definido como True, mas group_by não foi fornecido.")
+            column_names.remove(self.group_by)
 
         self.vocab.set_field_keys(column_names)
 
@@ -334,15 +345,71 @@ class ContabilDataset(Dataset):
         data = self.get_csv(data_file)
         log.info(f"{data_file} is read.")
 
-        log.info("Tratamento de nulos e codificação contábil...")
+        log.info("Engenharia de Recursos Temporais e Auditoria Contábil...")
+        # ==========================================
+        # 1. ENGENHARIA DE DELTAS TEMPORAIS
+        # ==========================================
+        dt_entry = pd.to_datetime(data['entry_date'], errors='coerce')
+        
+        dt = pd.to_datetime(data['entry_date'], errors='coerce')
 
-        # 1. Codificação das colunas de valor monetário (aplicando log)
+        # Quantas datas falharam na conversão?
+        nulos_gerados = dt.isna().sum()
+        total_linhas = len(data)
+        log.info(f"Total de linhas: {total_linhas}")
+        log.info(f"Datas que falharam e viraram NaT: {nulos_gerados} ({nulos_gerados / total_linhas * 100:.2f}%)")
+        
+        # 1.1 Atraso de Lançamento: creation_date vs entry_date (em dias)
+        delta_cols = []
+        if 'creation_date' in data.columns:
+            log.info(f"Calculando atraso de lançamento (creation_date vs entry_date)...")
+            dt_creation = pd.to_datetime(data['creation_date'], errors='coerce')
+            # Diferença em dias (valores positivos indicam digitação após a data contábil)
+            data['entry_delay_days'] = (dt_creation - dt_entry).dt.total_seconds() / (24 * 3600)
+            data['entry_delay_days'] = data['entry_delay_days'].fillna(0.0)
+            delta_cols.append('entry_delay_days')
+
+        # 1.2 Intervalo para o Lançamento Anterior do mesmo Grupo (Velocidade)
+        # Ordenamos temporalmente para o cálculo correto da série
+        if self.group_by and self.group_by in data.columns:
+            log.info(f"Calculando delta temporal relativo ao grupo '{self.group_by}'...")
+            data = data.sort_values(by=[self.group_by, 'entry_date']).reset_index(drop=True)
+            dt_entry_sorted = pd.to_datetime(data['entry_date'], errors='coerce')
+            data['group_delta_days'] = data.groupby(self.group_by, group_keys=False).apply(
+                lambda g: (pd.to_datetime(g['entry_date'], errors='coerce').diff().dt.total_seconds() / (24 * 3600))
+            ).fillna(0.0)
+        else:
+            log.info("Calculando delta temporal da linha do tempo global...")
+            data = data.sort_values(by='entry_date').reset_index(drop=True)
+            dt_entry_sorted = pd.to_datetime(data['entry_date'], errors='coerce')
+            data['group_delta_days'] = (dt_entry_sorted.diff().dt.total_seconds() / (24 * 3600)).fillna(0.0)
+
+        delta_cols.append('group_delta_days')
+
+        # ==========================================
+        # 2. TRATAMENTO NUMÉRICO (VALORES E RAZÕES)
+        # ==========================================
+        log.info("Calculando razões de movimento contábil...")
+        data['journal_entry_movement_ratio'] = (
+                data['movement'] / data['journal_entry_movement']).replace([np.inf, -np.inf], 1)
+        data['global_movement_ratio'] = (data['movement'] / data['global_movement']).replace(
+                [np.inf, -np.inf], 1)
+
+        
+        log.info("Codificação monetária e normalização de razões...")
         val_cols = ['movement', 'journal_entry_movement', 'global_movement']
         for col in val_cols:
             if col in data.columns:
                 data[col] = self.amountEncoder(data[col])
 
-        # 2. Tratamento de colunas categóricas e sequenciais (preenchendo vazios com 'None')
+        ratio_cols = ['journal_entry_movement_ratio', 'global_movement_ratio']
+        for col in ratio_cols:
+            if col in data.columns:
+                data[col] = data[col].astype(float).fillna(0.0)
+
+        # ==========================================
+        # 3. TRATAMENTO CATEGÓRICO E SEQUENCIAL
+        # ==========================================
         categoricas = [
             'company', 'branch', 'exchange_id', 'company_exchange_id',
             'erp_book_account', 'erp_book_account_name', 'cosif_book_account',
@@ -351,12 +418,11 @@ class ContabilDataset(Dataset):
             'erp_doc_type', 'status_origin', 'partner', 'partner_name',
             'cost_center', 'cost_center_name', 'profit_center', 'profit_center_name',
             'erp_book_account_type', 'movement_type', 'entry_credit_or_debit',
-            'erp_transaction_code', 'metadata_file_path', 'global_currency'
+            'erp_transaction_code', 'metadata_file_path', 'global_currency', 
         ]
         
         colunas_sequenciais = ['id', 'auxiliary_id', 'journal_entry_id', 'creator_user_id', 'sap_journal_entry_id']
         
-        # Juntamos tudo o que é texto/ID para virar vocabulário categórico nominal
         all_to_fit = categoricas + colunas_sequenciais
         for col in all_to_fit:
             if col in data.columns:
@@ -370,7 +436,10 @@ class ContabilDataset(Dataset):
                 self.encoder_fit[col_name] = col_fit
                 data[col_name] = col_data
 
-        log.info("Processando datas (entry_date e creation_time)...")
+        # ==========================================
+        # 4. PROCESSAMENTO DO TIMESTAMP BASE
+        # ==========================================
+        log.info("Processando Timestamp principal...")
         time_data = data[['entry_date']]
         if 'creation_time' in data.columns:
             time_data = data[['entry_date']].copy()
@@ -381,24 +450,31 @@ class ContabilDataset(Dataset):
         self.encoder_fit['Timestamp'] = timestamp_fit
         data['Timestamp'] = timestamp
 
-        log.info("Quantização (Binning) do Timestamp e dos Valores Monetários...")
-        # Quantiza o Timestamp
-        coldata = np.array(data['Timestamp'])
-        bin_edges, bin_centers, bin_widths = self._quantization_binning(coldata)
-        data['Timestamp'] = self._quantize(coldata, bin_edges)
-        self.encoder_fit["Timestamp-Quant"] = [bin_edges, bin_centers, bin_widths]
+        # ==========================================
+        # 5. QUANTIZAÇÃO (BINNING) DE TODAS AS CONTÍNUAS
+        # ==========================================
+        log.info("Quantização (Binning) de Timestamps, Deltas, Valores e Razões...")
+        
+        # Lista unificada de todas as colunas numéricas contínuas a quantizar
+        continuous_to_quant = ['Timestamp'] + \
+                              [c for c in delta_cols if c in data.columns] + \
+                              [c for c in val_cols if c in data.columns] + \
+                              [c for c in ratio_cols if c in data.columns]
 
-        # Quantiza a coluna principal de valor (ex: 'movement')
-        main_val_col = 'movement' if 'movement' in data.columns else val_cols[0]
-        coldata = np.array(data[main_val_col])
-        bin_edges, bin_centers, bin_widths = self._quantization_binning(coldata)
-        data[main_val_col] = self._quantize(coldata, bin_edges)
-        self.encoder_fit[f"{main_val_col}-Quant"] = [bin_edges, bin_centers, bin_widths]
+        for col in continuous_to_quant:
+            coldata = np.array(data[col])
+            bin_edges, bin_centers, bin_widths = self._quantization_binning(coldata)
+            data[col] = self._quantize(coldata, bin_edges)
+            self.encoder_fit[f"{col}-Quant"] = [bin_edges, bin_centers, bin_widths]
 
-        # 3. Seleção Final das Colunas: Todas as colunas contábeis entram como features
+        # ==========================================
+        # 6. SELEÇÃO FINAL DAS COLUNAS (FEATURES)
+        # ==========================================
         columns_to_select = (
             ['Timestamp'] + 
+            [c for c in delta_cols if c in data.columns] +
             [c for c in val_cols if c in data.columns] + 
+            [c for c in ratio_cols if c in data.columns] +
             [c for c in categoricas if c in data.columns] + 
             [c for c in colunas_sequenciais if c in data.columns]
         )

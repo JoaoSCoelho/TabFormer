@@ -26,7 +26,7 @@ data_volume = modal.Volume.from_name("tabformer-data")
 
 # 3. Configuramos a GPU e disparamos a função nativamente
 @app.function(
-    gpu="A100-40GB", 
+    gpu="B200", 
     timeout=86400, # Permite rodar por até 24 horas
     volumes={"/root/data": data_volume} 
 )

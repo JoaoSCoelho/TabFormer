@@ -67,6 +67,8 @@ $ python main.py --do_train --mlm --field_ce --lm_type bert \
 
 To train a tabular GPT2 model on credit card transactions for a particular _user-id_ :
 
+| Para o GPT precisa do flatten e não pode ter o mlm, tem que ter o field_ce
+
 ```
 
 $ python main.py --do_train --lm_type gpt2 --field_ce --flatten --data_type card \
@@ -103,4 +105,35 @@ Description of some options (more can be found in _`args.py`_):
 
 ```bash
 modal run modal_train.py
+```
+
+```bash
+python main.py \
+    --data_type contabil \
+    --data_root "./data/contabil" \
+    --data_fname "nufuturo_anonimizado" \
+    --output_dir "./checkpoints_contabeis" \
+    --lm_type gpt2 \
+    --flatten \
+    --field_ce \
+    --group_by "erp_book_account" \
+    --skip_group_col \
+    --stride 5 \
+    --do_train \
+    --do_eval \
+    --num_train_epochs 10
+```
+
+```bash
+python main.py \
+    --data_type contabil \
+    --data_root "./data/contabil" \
+    --data_fname "nufuturo_anonimizado" \
+    --output_dir "./checkpoints_contabeis" \
+    --lm_type gpt2 \
+    --flatten \
+    --field_ce \
+    --group_by "erp_book_account" \
+    --skip_group_col \
+    --do_train \
 ```

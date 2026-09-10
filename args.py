@@ -27,7 +27,7 @@ def define_main_parser(parser=None):
                         help="mask mlm_probability")
 
     parser.add_argument("--data_type", type=str,
-                        default="card", choices=['card', 'prsa'],
+                        default="card", choices=['card', 'prsa', 'contabil'],
                         help='root directory for files')
     parser.add_argument("--data_root", type=str,
                         default="./data/credit_card/",
@@ -44,6 +44,9 @@ def define_main_parser(parser=None):
     parser.add_argument('--user_ids', nargs='+',
                         default=None,
                         help='pass list of user ids to filter data by')
+    parser.add_argument('--group_by_ids', nargs='+',
+                        default=None,
+                        help='pass list of group_by column ids to filter data by')
     parser.add_argument("--cached", action='store_true',
                         help='use cached data files')
     parser.add_argument("--nrows", type=int,
@@ -75,5 +78,7 @@ def define_main_parser(parser=None):
                         help="hidden size for transaction transformer")
     parser.add_argument("--skip_user", action='store_true',
                         help="if user field to be skipped or added (default add)")
+    parser.add_argument("--skip_group_col", action='store_true',
+                        help="if group_col field to be skipped or added (default add)")
 
     return parser

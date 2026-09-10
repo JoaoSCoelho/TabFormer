@@ -22,7 +22,7 @@ image = (
 app = modal.App("tabformer-gpt2-train", image=image)
 
 # 2. Conectamos o nosso "pen-drive" virtual (onde os dados de cartão já estão salvos)
-data_volume = modal.Volume.from_name("tabformer-data")
+data_volume = modal.Volume.from_name("tabformer-data", create_if_missing=True)
 
 # 3. Configuramos a GPU e disparamos a função nativamente
 @app.function(
@@ -42,9 +42,10 @@ def train_model():
         "--do_train", 
         "--lm_type", "gpt2", 
         "--field_ce", 
+        "--flatten",
         "--data_type", "card",
         "--data_root", "/root/data/credit_card/",
         "--output_dir", "/root/data/output-gpt",
-        "--save_steps", "20000",
-        "--nrows", "5000000",
+        "--save_steps", "50000",
+        "--nrows", "2000000",
     ], check=True)

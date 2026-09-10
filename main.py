@@ -59,13 +59,13 @@ def main(args):
             fname=args.data_fname,
             vocab_dir=args.output_dir,
             nrows=args.nrows,
-            group_by_ids=args.user_ids, # Se aproveitar o argumento de IDs de conta
+            group_by_ids=args.group_by_ids, # Se aproveitar o argumento de IDs de conta
             mlm=args.mlm,
             cached=args.cached,
             stride=args.stride,
             flatten=args.flatten,
             group_by=args.group_by,
-            skip_group_col=args.skip_user
+            skip_group_col=args.skip_group_col
         )
 
     else:

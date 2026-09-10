@@ -18,7 +18,7 @@ class TransDataCollatorForLanguageModeling(DataCollatorForLanguageModeling):
         if self.mlm:
             batch = batch.view(sz[0], -1)
             inputs, labels = self.mask_tokens(batch)
-            return {"input_ids": inputs.view(sz), "masked_lm_labels": labels.view(sz)}
+            return {"input_ids": inputs.view(sz), "labels": labels.view(sz)}
         else:
             labels = batch.clone().detach()
             if self.tokenizer.pad_token_id is not None:

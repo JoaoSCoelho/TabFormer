@@ -2,7 +2,6 @@ import os
 from os import path
 import pandas as pd
 import numpy as np
-import math
 import tqdm
 import pickle
 import logging
@@ -14,7 +13,7 @@ import torch
 from torch.utils.data.dataset import Dataset
 
 from misc.utils import divide_chunks
-from dataset.vocab import Vocabulary
+from dataset.vocab_unsupervised import UnsupervisedVocabulary
 
 logger = logging.getLogger(__name__)
 log = logger
@@ -55,7 +54,7 @@ class ContabilDataset(Dataset):
 
         self.flatten = flatten
 
-        self.vocab = Vocabulary(adap_thres)
+        self.vocab = UnsupervisedVocabulary(adap_thres)
         self.seq_len = seq_len
         self.encoder_fit = {}
 

@@ -137,3 +137,9 @@ python main.py \
     --skip_group_col \
     --do_train \
 ```
+
+Para baixar do modal:
+
+```bash
+modal volume get tabformer-data output-gpt ./output-gpt
+```
